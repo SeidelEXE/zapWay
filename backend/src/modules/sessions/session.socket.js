@@ -1,111 +1,136 @@
 /**
- * Manipulador de eventos WebSocket para sessões
- * Responsável por emitir eventos em tempo real para o frontend
+ * WebSocket (Fastify) para sessoes.
+ * Protocolo simples por JSON:
+ * Cliente -> { "event": "get-sessions", "data": {} }
+ * Server  -> { "event": "sessions-list", "data": [...] }
  */
 class SessionSocket {
   /**
-   * @param {Object} io - Instância do Socket.IO
-   * @param {SessionService} sessionService - Instância do serviço de sessões
+   * @param {import('fastify').FastifyInstance} fastify - Instancia do Fastify (com @fastify/websocket registrado)
+   * @param {any} sessionService - Instancia do servico de sessoes
+   * @param {Object} [options]
+   * @param {string} [options.path] - Path do WS
    */
-  constructor(io, sessionService) {
-    this.io = io;
-    this.sessionService = sessionService;
-    this.setupEventListeners();
+  constructor(fastify, sessionService, options = {}) {
+    this.fastify = fastify
+    this.sessionService = sessionService
+    this.path = options.path || '/ws/sessions'
+    this.clients = new Set()
+
+    this.registerRoutes()
   }
 
   /**
-   * Configura os listeners de eventos
+   * Registra rota websocket no Fastify.
    */
-  setupEventListeners() {
-    this.io.on('connection', (socket) => {
-      console.log('Cliente conectado via WebSocket:', socket.id);
+  registerRoutes() {
+    this.fastify.get(this.path, { websocket: true }, (connection) => {
+      const socket = connection.socket
+      this.clients.add(socket)
+      this.fastify.log?.info?.({ ws: this.path }, 'ws connected')
 
-      // Quando o cliente solicita listar sessões
-      socket.on('get-sessions', async () => {
-        try {
-          const sessions = await this.sessionService.listSessions();
-          socket.emit('sessions-list', sessions);
-        } catch (error) {
-          socket.emit('error', { message: error.message });
-        }
-      });
+      socket.on('message', async (raw) => {
+        await this.handleIncoming(socket, raw)
+      })
 
-      // Quando o cliente solicita criar uma nova sessão
-      socket.on('create-session', async (sessionData) => {
-        try {
-          const result = await this.sessionService.createSession(sessionData);
-          // Emitir para todos os clientes conectados que uma nova sessão foi criada
-          this.io.emit('session-created', result);
-          socket.emit('create-session-response', result);
-        } catch (error) {
-          socket.emit('create-session-error', { message: error.message });
-        }
-      });
-
-      // Quando o cliente solicita remover uma sessão
-      socket.on('remove-session', async (sessionId) => {
-        try {
-          const result = await this.sessionService.removeSession(sessionId);
-          // Emitir para todos os clientes conectados que uma sessão foi removida
-          this.io.emit('session-removed', { sessionId });
-          socket.emit('remove-session-response', result);
-        } catch (error) {
-          socket.emit('remove-session-error', { message: error.message });
-        }
-      });
-
-      // Quando o cliente solicita enviar uma mensagem
-      socket.on('send-message', async (data) => {
-        try {
-          const { sessionId, number, content } = data;
-          const result = await this.sessionService.sendMessage(sessionId, number, content);
-          socket.emit('send-message-response', result);
-        } catch (error) {
-          socket.emit('send-message-error', { message: error.message });
-        }
-      });
-
-      // Quando o cliente se desconecta
-      socket.on('disconnect', () => {
-        console.log('Cliente desconectado:', socket.id);
-      });
-    });
+      socket.on('close', () => {
+        this.clients.delete(socket)
+        this.fastify.log?.info?.({ ws: this.path }, 'ws disconnected')
+      })
+    })
   }
 
   /**
-   * Emite evento de QR Code para um cliente específico
-   * @param {string} sessionId - ID da sessão
-   * @param {string} qr - Código QR
+   * Envia evento para um socket especifico.
+   * @param {any} socket
+   * @param {string} event
+   * @param {any} data
    */
+  send(socket, event, data) {
+    try {
+      socket.send(JSON.stringify({ event, data }))
+    } catch {
+      // Ignora erros de socket fechado
+    }
+  }
+
+  /**
+   * Broadcast para todos os clientes conectados.
+   * @param {string} event
+   * @param {any} data
+   */
+  broadcast(event, data) {
+    for (const socket of this.clients) {
+      if (socket.readyState === 1) {
+        this.send(socket, event, data)
+      }
+    }
+  }
+
+  /**
+   * Processa mensagens recebidas do cliente.
+   * @private
+   */
+  async handleIncoming(socket, raw) {
+    let msg
+    try {
+      msg = JSON.parse(raw.toString())
+    } catch {
+      this.send(socket, 'error', { message: 'invalid_json' })
+      return
+    }
+
+    const { event, data } = msg || {}
+
+    try {
+      if (event === 'get-sessions') {
+        const sessions = await this.sessionService.listSessions()
+        this.send(socket, 'sessions-list', sessions)
+        return
+      }
+
+      if (event === 'create-session') {
+        const result = await this.sessionService.createSession(data || {})
+        this.broadcast('session-created', result)
+        this.send(socket, 'create-session-response', result)
+        return
+      }
+
+      if (event === 'remove-session') {
+        const result = await this.sessionService.removeSession(data?.sessionId || data)
+        this.broadcast('session-removed', { sessionId: result.sessionId })
+        this.send(socket, 'remove-session-response', result)
+        return
+      }
+
+      if (event === 'send-message') {
+        const { sessionId, number, content } = data || {}
+        const result = await this.sessionService.sendMessage(sessionId, number, content)
+        this.send(socket, 'send-message-response', result)
+        return
+      }
+
+      this.send(socket, 'error', { message: 'unknown_event', event })
+    } catch (error) {
+      this.send(socket, 'error', { message: error?.message || 'internal_error', event })
+    }
+  }
+
   emitQRCode(sessionId, qr) {
-    this.io.emit('qr-code', { sessionId, qr });
+    this.broadcast('qr-code', { sessionId, qr })
   }
 
-  /**
-   * Emite evento de status de sessão para todos os clientes
-   * @param {string} sessionId - ID da sessão
-   * @param {string} status - Novo status
-   */
   emitSessionStatus(sessionId, status) {
-    this.io.emit('session-status', { sessionId, status });
+    this.broadcast('session-status', { sessionId, status })
   }
 
-  /**
-   * Emite evento de nova mensagem recebida
-   * @param {Object} message - Mensagem recebida
-   * @param {string} sessionId - ID da sessão
-   */
   emitNewMessage(message, sessionId) {
-    this.io.emit('new-message', { message, sessionId });
+    this.broadcast('new-message', { message, sessionId })
   }
 
-  /**
-   * Emite evento de log de mensagem
-   * @param {Object} log - Log da mensagem
-   */
   emitMessageLog(log) {
-    this.io.emit('message-log', log);
+    this.broadcast('message-log', log)
   }
 }
 
-module.exports = SessionSocket;
+module.exports = SessionSocket

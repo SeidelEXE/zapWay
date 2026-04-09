@@ -1,24 +1,39 @@
-const { makeInMemoryStore } = require('@adiwajshing/baileys')
-const { useMultiFileAuthState } = require('@adiwajshing/baileys')
+const path = require('path')
 const pino = require('pino')
 
+const {
+  default: makeWASocket,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeInMemoryStore,
+  useMultiFileAuthState
+} = require('@whiskeysockets/baileys')
+
 /**
- * Cliente Baileys para gerenciar uma sessão do WhatsApp
+ * Cliente Baileys para gerenciar uma sessao do WhatsApp.
  */
 class BaileysClient {
   /**
-   * @param {string} sessionId - ID único da sessão
-   * @param {Object} callbacks - Funções de callback para eventos
-   * @param {Function} callbacks.onQR - Callback quando QR Code é gerado
-   * @param {Function} callbacks.onConnected - Callback quando conectado
-   * @param {Function} callbacks.onDisconnected - Callback quando desconectado
-   * @param {Function} callbacks.onMessage - Callback quando mensagem é recebida
+   * @param {string} sessionId - ID unico da sessao
+   * @param {Object} callbacks - Funcoes de callback para eventos
+   * @param {(qr: string, sessionId: string) => void} [callbacks.onQR]
+   * @param {(sessionId: string) => void} [callbacks.onConnected]
+   * @param {(sessionId: string, error?: any) => void} [callbacks.onDisconnected]
+   * @param {(message: any, sessionId: string) => void} [callbacks.onMessage]
+   * @param {(error: any) => void} [callbacks.onError]
    */
   constructor(sessionId, callbacks = {}) {
     this.sessionId = sessionId
-    this.state = useMultiFileAuthState(`./sessions/${sessionId}`)
-    this.store = makeInMemoryStore({})
+    this.authDir = path.join(process.cwd(), 'sessions', sessionId)
+
+    this.logger = pino({ level: 'silent' })
+    this.store = makeInMemoryStore({ logger: this.logger })
+
     this.socket = null
+    this.connected = false
+    this._connecting = false
+    this.shouldReconnect = true
+
     this.callbacks = {
       onQR: callbacks.onQR || (() => {}),
       onConnected: callbacks.onConnected || (() => {}),
@@ -26,81 +41,111 @@ class BaileysClient {
       onMessage: callbacks.onMessage || (() => {}),
       onError: callbacks.onError || (() => {})
     }
-
-    // Salvar credenciais sempre que alteradas
-    this.state.saveCreds.bind(this.state)
   }
 
   /**
-   * Inicializa a conexão com WhatsApp
+   * Inicializa a conexao com WhatsApp.
    */
   async connect() {
-    const { saveCreds } = this.state
+    if (this._connecting) return
+    this._connecting = true
+    this.shouldReconnect = true
 
-    this.socket = require('@adiwajshing/baileys').default({
-      printQRInTerminal: false,
-      auth: {
-        creds: this.state.creds,
-        keys: this.state.keys
-      },
-      logger: pino({ level: 'silent' }),
-      browser: ['UnifiZap', 'Chrome', '']
-    })
+    try {
+      const { state, saveCreds } = await useMultiFileAuthState(this.authDir)
 
-    this.socket.ev.on('creds.update', saveCreds)
-    this.socket.ev.on('connection.update', this.handleConnectionUpdate.bind(this))
-    this.socket.ev.on('messages.upsert', this.handleMessageUpsert.bind(this))
+      let version
+      try {
+        const v = await fetchLatestBaileysVersion()
+        version = v.version
+      } catch {
+        version = undefined
+      }
 
-    await this.store.sync(this.socket)
+      this.socket = makeWASocket({
+        version,
+        printQRInTerminal: false,
+        auth: state,
+        logger: this.logger,
+        browser: ['UnifiZap', 'Chrome', '']
+      })
+
+      this.store.bind(this.socket.ev)
+
+      this.socket.ev.on('creds.update', saveCreds)
+      this.socket.ev.on('connection.update', (update) => this.handleConnectionUpdate(update))
+      this.socket.ev.on('messages.upsert', (m) => this.handleMessageUpsert(m))
+    } catch (e) {
+      this.callbacks.onError(e)
+      throw e
+    } finally {
+      this._connecting = false
+    }
   }
 
   /**
-   * Manipula atualizações de conexão
-   * @param {Object} update - Atualização de conexão do Baileys
+   * @param {any} update - Atualizacao de conexao do Baileys
    */
   handleConnectionUpdate(update) {
-    const { connection, lastDisconnect, qr } = update
+    const { connection, lastDisconnect, qr } = update || {}
 
     if (qr) {
       this.callbacks.onQR(qr, this.sessionId)
     }
 
     if (connection === 'open') {
+      this.connected = true
       this.callbacks.onConnected(this.sessionId)
+      return
     }
 
-    if (connection === 'close' && lastDisconnect && lastDisconnect.error && lastDisconnect.error.output.statusCode !== 401) {
-      this.callbacks.onDisconnected(this.sessionId, lastDisconnect.error)
-      // Tentar reconectar após erro não autorizado
-      setTimeout(() => this.connect(), 5000)
+    if (connection === 'close') {
+      this.connected = false
+
+      const error = lastDisconnect?.error
+      const statusCode = error?.output?.statusCode
+
+      this.callbacks.onDisconnected(this.sessionId, error)
+
+      // Nao reconectar automaticamente se tiver feito logout ou se a desconexao foi intencional.
+      if (this.shouldReconnect && statusCode !== DisconnectReason.loggedOut) {
+        setTimeout(() => {
+          this.connect().catch(this.callbacks.onError)
+        }, 5000)
+      }
     }
   }
 
   /**
-   * Manipula recebimento de mensagens
-   * @param {Object} mensagem - Objeto de mensagem do Baileys
+   * Manipula recebimento de mensagens.
+   * @param {any} upsert
    */
-  handleMessageUpsert(mensagem) {
-    const message = mensagem.messages[0]
-    if (!message.key.fromMe) { // Apenas mensagens recebidas
-      this.callbacks.onMessage({
+  handleMessageUpsert(upsert) {
+    const message = upsert?.messages?.[0]
+    if (!message) return
+
+    // Apenas mensagens recebidas
+    if (message.key?.fromMe) return
+
+    this.callbacks.onMessage(
+      {
         key: message.key,
         message: message.message,
         pushName: message.pushName,
         timestamp: message.messageTimestamp
-      }, this.sessionId)
-    }
+      },
+      this.sessionId
+    )
   }
 
   /**
-   * Envia uma mensagem
-   * @param {string} number - Número do destinatário (formato internacional)
-   * @param {string|Object} content - Conteúdo da mensagem
-   * @returns {Promise<Object>} Resultado do envio
+   * Envia uma mensagem.
+   * @param {string} number - Numero do destinatario (formato internacional)
+   * @param {string|Object} content - Conteudo da mensagem
    */
   async sendMessage(number, content) {
-    if (!this.socket || this.socket.ws?.readyState !== 3) {
-      throw new Error('Cliente não conectado')
+    if (!this.socket || !this.connected) {
+      throw new Error('Cliente nao conectado')
     }
 
     const formattedNumber = number.endsWith('@s.whatsapp.net')
@@ -111,21 +156,32 @@ class BaileysClient {
   }
 
   /**
-   * Desconecta o cliente
+   * Desconecta o cliente.
    */
   async disconnect() {
-    if (this.socket) {
-      await this.socket.destroy()
+    if (!this.socket) return
+
+    this.shouldReconnect = false
+
+    try {
+      if (typeof this.socket.end === 'function') {
+        this.socket.end()
+      } else if (this.socket.ws && typeof this.socket.ws.close === 'function') {
+        this.socket.ws.close()
+      }
+    } catch (e) {
+      this.callbacks.onError(e)
+    } finally {
       this.socket = null
+      this.connected = false
     }
   }
 
   /**
-   * Verifica se o cliente está conectado
-   * @returns {boolean} Status de conexão
+   * @returns {boolean}
    */
   isConnected() {
-    return this.socket && this.socket.ws?.readyState === 3
+    return !!this.socket && this.connected === true
   }
 }
 

@@ -1,92 +1,80 @@
 const BaileysManager = require('../../infra/baileys/baileys.manager')
 
 /**
- * Serviço de gerenciamento de sessões do WhatsApp
+ * Servico de gerenciamento de sessoes do WhatsApp.
  */
 class SessionService {
-  constructor() {
+  constructor({ sessionSocket } = {}) {
     this.baileysManager = new BaileysManager()
+    this.sessionSocket = sessionSocket || null
   }
 
   /**
-   * Cria uma nova sessão do WhatsApp
-   * @param {Object} sessionData - Dados da sessão (id, etc.)
-   * @returns {Promise<Object>} Resultado da criação
+   * Cria uma nova sessao do WhatsApp.
+   * @param {Object} sessionData - Dados da sessao
+   * @returns {Promise<Object>}
    */
   async createSession(sessionData) {
-    const { sessionId } = sessionData
+    const { sessionId } = sessionData || {}
 
     if (!sessionId) {
-      throw new Error('ID da sessão é obrigatório')
+      throw new Error('ID da sessao e obrigatorio')
     }
 
-    // Criar sessão com callbacks
-    const client = this.baileysManager.createSession(sessionId, {
+    // Criar sessao com callbacks
+    this.baileysManager.createSession(sessionId, {
       onQR: (qr, id) => {
-        // Emitir evento QR para o frontend via WebSocket
         this.emitQRCode(id, qr)
       },
       onConnected: (id) => {
-        // Atualizar status da sessão no banco
         this.updateSessionStatus(id, 'connected')
         this.emitSessionStatus(id, 'connected')
       },
       onDisconnected: (id, error) => {
-        // Atualizar status da sessão no banco
         this.updateSessionStatus(id, 'disconnected')
         this.emitSessionStatus(id, 'disconnected')
 
-        // Tentar reconectar automaticamente após 5 segundos (exceto se for logout)
-        if (error && error.output?.statusCode !== 401) {
-          setTimeout(() => {
-            this.reconnectSession(id).catch(console.error)
-          }, 5000)
+        // Reconexao automatica fica no BaileysClient (infra)
+        if (error) {
+          // noop
         }
       },
-      onMessage: (message, sessionId) => {
-        // Processar mensagem recebida
-        this.handleIncomingMessage(message, sessionId)
+      onMessage: (message, sid) => {
+        this.handleIncomingMessage(message, sid)
       }
     })
 
-    // Iniciar conexão
     await this.baileysManager.connectSession(sessionId)
-
-    // Salvar informações da sessão no banco
     await this.createSessionRecord(sessionData)
 
     return {
       success: true,
       sessionId,
-      message: 'Sessão criada com sucesso'
+      message: 'Sessao criada com sucesso'
     }
   }
 
   /**
-   * Remove uma sessão existente
-   * @param {string} sessionId - ID da sessão a ser removida
-   * @returns {Promise<Object>} Resultado da remoção
+   * Remove uma sessao existente.
    */
   async removeSession(sessionId) {
     const success = this.baileysManager.removeSession(sessionId)
 
     if (!success) {
-      throw new Error(`Sessão ${sessionId} não encontrada`)
+      throw new Error(`Sessao ${sessionId} nao encontrada`)
     }
 
-    // Atualizar status no banco
     await this.updateSessionStatus(sessionId, 'removed')
 
     return {
       success: true,
       sessionId,
-      message: 'Sessão removida com sucesso'
+      message: 'Sessao removida com sucesso'
     }
   }
 
   /**
-   * Lista todas as sessões ativas
-   * @returns {Promise<Array>} Lista de sessões
+   * Lista todas as sessoes ativas.
    */
   async listSessions() {
     const sessionIds = this.baileysManager.listSessions()
@@ -107,9 +95,7 @@ class SessionService {
   }
 
   /**
-   * Obtém informações de uma sessão específica
-   * @param {string} sessionId - ID da sessão
-   * @returns {Promise<Object>} Dados da sessão
+   * Obtem informacoes de uma sessao especifica.
    */
   async getSession(sessionId) {
     const sessionRecord = await this.getSessionRecord(sessionId)
@@ -124,14 +110,12 @@ class SessionService {
   }
 
   /**
-   * Reconecta uma sessão
-   * @param {string} sessionId - ID da sessão
-   * @returns {Promise<void>}
+   * Reconecta uma sessao manualmente.
    */
   async reconnectSession(sessionId) {
     const session = this.baileysManager.getSession(sessionId)
     if (!session) {
-      throw new Error(`Sessão ${sessionId} não encontrada`)
+      throw new Error(`Sessao ${sessionId} nao encontrada`)
     }
 
     if (!session.isConnected()) {
@@ -140,95 +124,58 @@ class SessionService {
   }
 
   /**
-   * Envia mensagem via uma sessão específica
-   * @param {string} sessionId - ID da sessão
-   * @param {string} number - Número do destinatário
-   * @param {string|Object} content - Conteúdo da mensagem
-   * @returns {Promise<Object>} Resultado do envio
+   * Envia mensagem via uma sessao especifica.
    */
   async sendMessage(sessionId, number, content) {
     return this.baileysManager.sendMessage(sessionId, number, content)
   }
 
-  /**
-   * Atualiza status da sessão no banco de dados
-   * @private
-   * @param {string} sessionId - ID da sessão
-   * @param {string} status - Novo status
-   */
   async updateSessionStatus(sessionId, status) {
-    // Implementação será feita no session.store.js
-    // Por enquanto, apenas placeholder
-    console.log(`Atualizando status da sessão ${sessionId} para ${status}`)
+    // Implementacao sera feita no session.store.js
+    console.log(`Atualizando status da sessao ${sessionId} para ${status}`)
   }
 
-  /**
-   * Emite evento de QR Code via WebSocket
-   * @private
-   * @param {string} sessionId - ID da sessão
-   * @param {string} qr - Código QR
-   */
   emitQRCode(sessionId, qr) {
-    // Implementação será feita no session.socket.js
-    console.log(`QR Code para sessão ${sessionId}:`, qr)
+    if (this.sessionSocket && typeof this.sessionSocket.emitQRCode === 'function') {
+      this.sessionSocket.emitQRCode(sessionId, qr)
+      return
+    }
+
+    console.log(`QR Code para sessao ${sessionId}:`, qr)
   }
 
-  /**
-   * Emite evento de status via WebSocket
-   * @private
-   * @param {string} sessionId - ID da sessão
-   * @param {string} status - Novo status
-   */
   emitSessionStatus(sessionId, status) {
-    // Implementação será feita no session.socket.js
-    console.log(`Status da sessão ${sessionId}: ${status}`)
+    if (this.sessionSocket && typeof this.sessionSocket.emitSessionStatus === 'function') {
+      this.sessionSocket.emitSessionStatus(sessionId, status)
+      return
+    }
+
+    console.log(`Status da sessao ${sessionId}: ${status}`)
   }
 
-  /**
-   * Processa mensagem recebida
-   * @private
-   * @param {Object} message - Mensagem recebida
-   * @param {string} sessionId - ID da sessão
-   */
   async handleIncomingMessage(message, sessionId) {
-    // Salvar mensagem no banco
     await this.saveReceivedMessage(message, sessionId)
 
-    // Verificar regras automáticas
+    if (this.sessionSocket && typeof this.sessionSocket.emitNewMessage === 'function') {
+      this.sessionSocket.emitNewMessage(message, sessionId)
+    }
+
     await this.processAutoReply(message, sessionId)
   }
 
-  /**
-   * Salva mensagem recebida no banco de dados
-   * @private
-   * @param {Object} message - Mensagem recebida
-   * @param {string} sessionId - ID da sessão
-   */
-  async saveReceivedMessage(message, sessionId) {
-    // Implementação será feita no message.service.js
-    console.log(`Salvando mensagem recebida da sessão ${sessionId}`)
-  }
-
-  /**
-   * Processa resposta automática baseado em regras
-   * @private
-   * @param {Object} message - Mensagem recebida
-   * @param {string} sessionId - ID da sessão
-   */
   async processAutoReply(message, sessionId) {
-    // Implementação será feita no rules.service.js e rules.engine.js
-    console.log(`Processando regras para mensagem da sessão ${sessionId}`)
+    // Implementacao sera feita no rules.service.js e rules.engine.js
+    console.log(`Processando regras para mensagem da sessao ${sessionId}`)
   }
 
-  // Métodos placeholder para interação com banco de dados
-  // Serão implementados nos store.js correspondentes
+  // Metodos placeholder para interacao com banco de dados
 
   async createSessionRecord(sessionData) {
-    console.log('Criando registro de sessão:', sessionData)
+    console.log('Criando registro de sessao:', sessionData)
   }
 
   async getSessionRecord(sessionId) {
-    console.log('Buscando registro de sessão:', sessionId)
+    console.log('Buscando registro de sessao:', sessionId)
     return { id: sessionId, number: '', status: 'created' }
   }
 

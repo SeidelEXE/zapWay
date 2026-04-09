@@ -14,7 +14,8 @@
     "@fastify/cors": "^11.2.0",
     "@fastify/websocket": "^11.2.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
-    "fastify": "^5.8.4"
+    "fastify": "^5.8.4",
+    "pino": "^9.9.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
@@ -22,3 +23,4 @@
     "typescript": "^6.0.2"
   }
 }
+
