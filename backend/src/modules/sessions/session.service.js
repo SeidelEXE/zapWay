@@ -1,187 +1,296 @@
-const BaileysManager = require('../../infra/baileys/baileys.manager')
-
 /**
- * Servico de gerenciamento de sessoes do WhatsApp.
+ * ============================================
+ * ARQUIVO: modules/sessions/session.service.js
+ * ============================================
+ * Serviço principal para gerenciamento de sessões WhatsApp.
+ * Orquestra a criação, conexão e comunicação com o Baileys.
+ * Armazena estado das sessões em memória (Map).
  */
+
+const { v4: uuidv4 } = require('uuid');
+
+// Importação do gerenciador Baileys (infraestrutura de baixo nível)
+const BaileysManager = require('../../infra/baileys/baileys.manager');
+
 class SessionService {
-  constructor({ sessionSocket } = {}) {
-    this.baileysManager = new BaileysManager()
-    this.sessionSocket = sessionSocket || null
-  }
-
   /**
-   * Cria uma nova sessao do WhatsApp.
-   * @param {Object} sessionData - Dados da sessao
-   * @returns {Promise<Object>}
+   * Construtor do serviço de sessões.
+   * Inicializa o gerenciador Baileys e mapas de estado.
    */
-  async createSession(sessionData) {
-    const { sessionId } = sessionData || {}
+  constructor() {
+    // Instância do gerenciador Baileys para operações de baixo nível
+    this.baileysManager = new BaileysManager();
 
-    if (!sessionId) {
-      throw new Error('ID da sessao e obrigatorio')
-    }
+    // Mapa em memória para armazenar dados das sessões
+    // Key: sessionId, Value: objeto com dados da sessão
+    this.sessions = new Map();
 
-    // Criar sessao com callbacks
-    this.baileysManager.createSession(sessionId, {
-      onQR: (qr, id) => {
-        this.emitQRCode(id, qr)
-      },
-      onConnected: (id) => {
-        this.updateSessionStatus(id, 'connected')
-        this.emitSessionStatus(id, 'connected')
-      },
-      onDisconnected: (id, error) => {
-        this.updateSessionStatus(id, 'disconnected')
-        this.emitSessionStatus(id, 'disconnected')
+    // Referência para o módulo WebSocket (injetada posteriormente)
+    this.sessionSocket = null;
 
-        // Reconexao automatica fica no BaileysClient (infra)
-        if (error) {
-          // noop
-        }
-      },
-      onMessage: (message, sid) => {
-        this.handleIncomingMessage(message, sid)
-      }
-    })
-
-    await this.baileysManager.connectSession(sessionId)
-    await this.createSessionRecord(sessionData)
-
-    return {
-      success: true,
-      sessionId,
-      message: 'Sessao criada com sucesso'
-    }
+    // Referência para o listener de mensagens (injetada posteriormente)
+    this.messageListener = null;
   }
 
   /**
-   * Remove uma sessao existente.
+   * Define o listener de mensagens para processar mensagens recebidas.
+   * Chamado pelo app.js após criar todas as instâncias.
+   * 
+   * @param {MessageListener} messageListener - Instância do listener
+   */
+  setMessageListener(messageListener) {
+    this.messageListener = messageListener;
+  }
+
+  /**
+   * Cria uma nova sessão WhatsApp.
+   * Inicializa o cliente Baileys e inicia a conexão.
+   * 
+   * @param {Object} sessionData - Dados da sessão
+   * @param {string} [sessionData.sessionId] - ID personalizado (gerado se não informado)
+   * @param {string} [sessionData.name] - Nome amigável da sessão
+   * @returns {Object} Dados da sessão criada
+   */
+  async createSession(sessionData = {}) {
+    // Gera ID único se não fornecido (formato: session_xxxxxxxx)
+    const sessionId = sessionData.sessionId || `session_${uuidv4().slice(0, 8)}`;
+
+    // Verifica se já existe sessão com esse ID
+    if (this.baileysManager.hasSession(sessionId)) {
+      throw new Error(`Sessão ${sessionId} já existe`);
+    }
+
+    // Cria objeto com dados da sessão
+    const session = {
+      id: sessionId,
+      name: sessionData.name || sessionId, // Nome amigável
+      status: 'connecting', // Status inicial
+      createdAt: new Date(), // Data de criação
+      phone: null // Número WhatsApp (definido após conexão)
+    };
+
+    // Armazena dados da sessão em memória
+    this.sessions.set(sessionId, session);
+
+    // Cria sessão no Baileys com callbacks para eventos
+    this.baileysManager.createSession(sessionId, {
+      // Callback: QR Code gerado (usuário precisa escanear)
+      onQR: (qr) => {
+        this.emitQRCode(sessionId, qr);
+      },
+
+      // Callback: Conexão estabelecida com sucesso
+      onConnected: () => {
+        this.updateSessionStatus(sessionId, 'connected');
+        this.emitSessionStatus(sessionId, 'connected');
+      },
+
+      // Callback: Desconexão (pode ser intencional ou erro)
+      onDisconnected: (sid, error) => {
+        this.updateSessionStatus(sessionId, 'disconnected');
+        this.emitSessionStatus(sessionId, 'disconnected');
+      },
+
+      // Callback: Nova mensagem recebida
+      onMessage: (message) => {
+        this.handleIncomingMessage(message, sessionId);
+      },
+
+      // Callback: Erro na sessão
+      onError: (error) => {
+        console.error(`Erro na sessão ${sessionId}:`, error);
+        this.updateSessionStatus(sessionId, 'error');
+      }
+    });
+
+    // Inicia a conexão com WhatsApp
+    await this.baileysManager.connectSession(sessionId);
+
+    // Retorna confirmação (QR será enviado via WebSocket)
+    return {
+      id: sessionId,
+      status: 'connecting',
+      message: 'Sessão criada, aguardando QR Code'
+    };
+  }
+
+  /**
+   * Remove uma sessão existente.
+   * Desconecta e remove todos os dados associados.
+   * 
+   * @param {string} sessionId - ID da sessão a remover
+   * @returns {Object} Confirmação da remoção
    */
   async removeSession(sessionId) {
-    const success = this.baileysManager.removeSession(sessionId)
-
-    if (!success) {
-      throw new Error(`Sessao ${sessionId} nao encontrada`)
+    // Verifica se a sessão existe
+    if (!this.baileysManager.hasSession(sessionId)) {
+      throw new Error(`Sessão ${sessionId} não encontrada`);
     }
 
-    await this.updateSessionStatus(sessionId, 'removed')
+    // Remove do gerenciador Baileys (desconecta se conectada)
+    this.baileysManager.removeSession(sessionId);
 
-    return {
-      success: true,
-      sessionId,
-      message: 'Sessao removida com sucesso'
-    }
+    // Remove dados da sessão do mapa em memória
+    this.sessions.delete(sessionId);
+
+    // Notifica via WebSocket que sessão foi removida
+    this.emitSessionStatus(sessionId, 'removed');
+
+    return { success: true, sessionId, message: 'Sessão removida' };
   }
 
   /**
-   * Lista todas as sessoes ativas.
+   * Lista todas as sessões ativas com status atual.
+   * 
+   * @returns {Array} Lista de sessões com dados e status
    */
   async listSessions() {
-    const sessionIds = this.baileysManager.listSessions()
-    const sessions = []
+    const sessions = [];
 
-    for (const sessionId of sessionIds) {
-      const sessionRecord = await this.getSessionRecord(sessionId)
-      const isConnected = this.baileysManager.getSession(sessionId)?.isConnected() || false
+    // Itera sobre todas as sessões armazenadas
+    for (const [sessionId, session] of this.sessions) {
+      // Obtém cliente Baileys para verificar conexão real
+      const baileysSession = this.baileysManager.getSession(sessionId);
+      const isConnected = baileysSession?.isConnected() || false;
 
+      // Adiciona sessão com status atualizado
       sessions.push({
-        ...sessionRecord,
-        isConnected,
-        status: isConnected ? 'connected' : 'disconnected'
-      })
+        ...session,
+        // Sobrescreve status com base na conexão real
+        status: isConnected ? 'connected' : session.status
+      });
     }
 
-    return sessions
+    return sessions;
   }
 
   /**
-   * Obtem informacoes de uma sessao especifica.
+   * Obtém dados de uma sessão específica.
+   * 
+   * @param {string} sessionId - ID da sessão
+   * @returns {Object} Dados da sessão
    */
   async getSession(sessionId) {
-    const sessionRecord = await this.getSessionRecord(sessionId)
-    const baileysSession = this.baileysManager.getSession(sessionId)
-    const isConnected = baileysSession ? baileysSession.isConnected() : false
+    // Busca sessão no mapa
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Sessão ${sessionId} não encontrada`);
+    }
+
+    // Verifica status real de conexão
+    const baileysSession = this.baileysManager.getSession(sessionId);
+    const isConnected = baileysSession?.isConnected() || false;
 
     return {
-      ...sessionRecord,
-      isConnected,
-      status: isConnected ? 'connected' : 'disconnected'
-    }
+      ...session,
+      status: isConnected ? 'connected' : session.status
+    };
   }
 
   /**
-   * Reconecta uma sessao manualmente.
+   * Reconecta uma sessão que está desconectada.
+   * Útil para recuperação automática após perda de conexão.
+   * 
+   * @param {string} sessionId - ID da sessão
+   * @returns {Object} Status da reconexão
    */
   async reconnectSession(sessionId) {
-    const session = this.baileysManager.getSession(sessionId)
-    if (!session) {
-      throw new Error(`Sessao ${sessionId} nao encontrada`)
+    if (!this.baileysManager.hasSession(sessionId)) {
+      throw new Error(`Sessão ${sessionId} não encontrada`);
     }
 
-    if (!session.isConnected()) {
-      await this.baileysManager.connectSession(sessionId)
+    // Tenta reconectar
+    await this.baileysManager.connectSession(sessionId);
+    this.updateSessionStatus(sessionId, 'connecting');
+
+    return { success: true, sessionId, message: 'Reconectando...' };
+  }
+
+  /**
+   * Envia uma mensagem de texto via WhatsApp.
+   * 
+   * @param {string} sessionId - ID da sessão
+   * @param {string} number - Número do destinatário
+   * @param {string} content - Texto da mensagem
+   * @returns {Object} Resultado do envio com messageId
+   */
+  async sendMessage(sessionId, number, content) {
+    try {
+      // Encaminha para o gerenciador Baileys
+      const result = await this.baileysManager.sendMessage(
+        sessionId,
+        number,
+        { text: content }
+      );
+
+      return {
+        success: true,
+        messageId: result?.key?.id // ID da mensagem enviada
+      };
+    } catch (error) {
+      throw new Error(`Erro ao enviar mensagem: ${error.message}`);
     }
   }
 
   /**
-   * Envia mensagem via uma sessao especifica.
+   * Atualiza o status de uma sessão no mapa em memória.
+   * 
+   * @param {string} sessionId - ID da sessão
+   * @param {string} status - Novo status
    */
-  async sendMessage(sessionId, number, content) {
-    return this.baileysManager.sendMessage(sessionId, number, content)
+  updateSessionStatus(sessionId, status) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.status = status;
+      session.updatedAt = new Date();
+    }
   }
 
-  async updateSessionStatus(sessionId, status) {
-    // Implementacao sera feita no session.store.js
-    console.log(`Atualizando status da sessao ${sessionId} para ${status}`)
-  }
-
+  /**
+   * Emite evento de QR Code via WebSocket.
+   * O frontend usa isso para exibir o QR Code ao usuário.
+   * 
+   * @param {string} sessionId - ID da sessão
+   * @param {string} qr - QR Code em formato de texto/imagem
+   */
   emitQRCode(sessionId, qr) {
-    if (this.sessionSocket && typeof this.sessionSocket.emitQRCode === 'function') {
-      this.sessionSocket.emitQRCode(sessionId, qr)
-      return
+    if (this.sessionSocket?.emitQRCode) {
+      this.sessionSocket.emitQRCode(sessionId, qr);
     }
-
-    console.log(`QR Code para sessao ${sessionId}:`, qr)
   }
 
+  /**
+   * Emite evento de mudança de status via WebSocket.
+   * Notifica o frontend sobre alterações na conexão.
+   * 
+   * @param {string} sessionId - ID da sessão
+   * @param {string} status - Novo status
+   */
   emitSessionStatus(sessionId, status) {
-    if (this.sessionSocket && typeof this.sessionSocket.emitSessionStatus === 'function') {
-      this.sessionSocket.emitSessionStatus(sessionId, status)
-      return
+    if (this.sessionSocket?.emitSessionStatus) {
+      this.sessionSocket.emitSessionStatus(sessionId, status);
     }
-
-    console.log(`Status da sessao ${sessionId}: ${status}`)
   }
 
+  /**
+   * Processa mensagem recebida do WhatsApp.
+   * Encaminha para WebSocket e para o motor de regras.
+   * 
+   * @param {Object} message - Dados da mensagem
+   * @param {string} sessionId - ID da sessão origem
+   */
   async handleIncomingMessage(message, sessionId) {
-    await this.saveReceivedMessage(message, sessionId)
-
-    if (this.sessionSocket && typeof this.sessionSocket.emitNewMessage === 'function') {
-      this.sessionSocket.emitNewMessage(message, sessionId)
+    // Emite para WebSocket (frontend pode exibir em tempo real)
+    if (this.sessionSocket?.emitNewMessage) {
+      this.sessionSocket.emitNewMessage(message, sessionId);
     }
 
-    await this.processAutoReply(message, sessionId)
-  }
-
-  async processAutoReply(message, sessionId) {
-    // Implementacao sera feita no rules.service.js e rules.engine.js
-    console.log(`Processando regras para mensagem da sessao ${sessionId}`)
-  }
-
-  // Metodos placeholder para interacao com banco de dados
-
-  async createSessionRecord(sessionData) {
-    console.log('Criando registro de sessao:', sessionData)
-  }
-
-  async getSessionRecord(sessionId) {
-    console.log('Buscando registro de sessao:', sessionId)
-    return { id: sessionId, number: '', status: 'created' }
-  }
-
-  async saveReceivedMessage(message, sessionId) {
-    console.log('Salvando mensagem recebida:', { message, sessionId })
+    // Encaminha para listener processar regras de automação
+    if (this.messageListener?.handleMessage) {
+      await this.messageListener.handleMessage(message, sessionId);
+    }
   }
 }
 
-module.exports = SessionService
+module.exports = SessionService;
