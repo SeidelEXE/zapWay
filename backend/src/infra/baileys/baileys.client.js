@@ -1,12 +1,12 @@
 const path = require('path')
 const pino = require('pino')
+const createJsonAuthState = require('./json-auth-state')
 
 const {
   default: makeWASocket,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  makeInMemoryStore,
-  useMultiFileAuthState
+  makeInMemoryStore
 } = require('@whiskeysockets/baileys')
 
 /**
@@ -24,15 +24,21 @@ class BaileysClient {
    */
   constructor(sessionId, callbacks = {}) {
     this.sessionId = sessionId
-    this.authDir = path.join(process.cwd(), 'sessions', sessionId)
+    this.authFile = path.join(process.cwd(), 'config', 'terminal-session.json')
 
     this.logger = pino({ level: 'silent' })
-    this.store = makeInMemoryStore({ logger: this.logger })
+    this.store = typeof makeInMemoryStore === 'function'
+      ? makeInMemoryStore({ logger: this.logger })
+      : null
 
     this.socket = null
     this.connected = false
     this._connecting = false
     this.shouldReconnect = true
+    this._reconnectTimer = null
+    this.reconnectAttempts = 0
+    this.baseReconnectDelayMs = 1000
+    this.maxReconnectDelayMs = 30000
 
     this.callbacks = {
       onQR: callbacks.onQR || (() => {}),
@@ -52,7 +58,8 @@ class BaileysClient {
     this.shouldReconnect = true
 
     try {
-      const { state, saveCreds } = await useMultiFileAuthState(this.authDir)
+      const authState = createJsonAuthState(this.authFile)
+      const { state, saveCreds } = authState
 
       let version
       try {
@@ -70,7 +77,9 @@ class BaileysClient {
         browser: ['UnifiZap', 'Chrome', '']
       })
 
-      this.store.bind(this.socket.ev)
+      if (this.store?.bind) {
+        this.store.bind(this.socket.ev)
+      }
 
       this.socket.ev.on('creds.update', saveCreds)
       this.socket.ev.on('connection.update', (update) => this.handleConnectionUpdate(update))
@@ -95,24 +104,59 @@ class BaileysClient {
 
     if (connection === 'open') {
       this.connected = true
+      this.reconnectAttempts = 0
       this.callbacks.onConnected(this.sessionId)
       return
     }
 
     if (connection === 'close') {
       this.connected = false
+      this.socket = null
 
       const error = lastDisconnect?.error
       const statusCode = error?.output?.statusCode
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut
 
       this.callbacks.onDisconnected(this.sessionId, error)
 
-      // Nao reconectar automaticamente se tiver feito logout ou se a desconexao foi intencional.
-      if (this.shouldReconnect && statusCode !== DisconnectReason.loggedOut) {
-        setTimeout(() => {
-          this.connect().catch(this.callbacks.onError)
-        }, 5000)
+      // Quando o WhatsApp invalida a sessao (loggedOut), removemos auth antiga
+      // para forcar novo QR na proxima tentativa.
+      if (isLoggedOut) {
+        console.log(`[${this.sessionId}] Sessao invalidada/deslogada. Preparando novo pareamento por QR Code...`)
+        this.clearAuthState()
       }
+
+      // Reconecta automaticamente enquanto nao for uma desconexao intencional.
+      if (this.shouldReconnect) {
+        if (this._reconnectTimer) {
+          clearTimeout(this._reconnectTimer)
+        }
+        const delayMs = this.getReconnectDelayMs()
+        console.log(`[${this.sessionId}] Tentando reconectar em ${delayMs}ms...`)
+        this._reconnectTimer = setTimeout(() => {
+          this._reconnectTimer = null
+          this.connect().catch(this.callbacks.onError)
+        }, delayMs)
+      }
+    }
+  }
+
+  getReconnectDelayMs() {
+    const attempt = this.reconnectAttempts
+    this.reconnectAttempts += 1
+
+    const exp = this.baseReconnectDelayMs * (2 ** attempt)
+    const capped = Math.min(this.maxReconnectDelayMs, exp)
+    const jitter = 0.85 + Math.random() * 0.3
+    return Math.round(capped * jitter)
+  }
+
+  clearAuthState() {
+    try {
+      const authState = createJsonAuthState(this.authFile)
+      authState.clear()
+    } catch (e) {
+      this.callbacks.onError(e)
     }
   }
 
@@ -121,21 +165,23 @@ class BaileysClient {
    * @param {any} upsert
    */
   handleMessageUpsert(upsert) {
-    const message = upsert?.messages?.[0]
-    if (!message) return
+    const messages = upsert?.messages || []
+    for (const message of messages) {
+      if (!message) continue
 
-    // Apenas mensagens recebidas
-    if (message.key?.fromMe) return
+      // Apenas mensagens recebidas
+      if (message.key?.fromMe) continue
 
-    this.callbacks.onMessage(
-      {
-        key: message.key,
-        message: message.message,
-        pushName: message.pushName,
-        timestamp: message.messageTimestamp
-      },
-      this.sessionId
-    )
+      this.callbacks.onMessage(
+        {
+          key: message.key,
+          message: message.message,
+          pushName: message.pushName,
+          timestamp: message.messageTimestamp
+        },
+        this.sessionId
+      )
+    }
   }
 
   /**
@@ -148,11 +194,18 @@ class BaileysClient {
       throw new Error('Cliente nao conectado')
     }
 
-    const formattedNumber = number.endsWith('@s.whatsapp.net')
+    const formattedNumber = number.includes('@')
       ? number
       : `${number.replace(/[^\d]/g, '')}@s.whatsapp.net`
 
     return this.socket.sendMessage(formattedNumber, content)
+  }
+
+  async sendPresenceUpdate(presence, jid) {
+    if (!this.socket || !this.connected) {
+      throw new Error('Cliente nao conectado')
+    }
+    return this.socket.sendPresenceUpdate(presence, jid)
   }
 
   /**
@@ -162,6 +215,10 @@ class BaileysClient {
     if (!this.socket) return
 
     this.shouldReconnect = false
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer)
+      this._reconnectTimer = null
+    }
 
     try {
       if (typeof this.socket.end === 'function') {

@@ -1,0 +1,17 @@
+{
+  "defaultReply": "Recebi sua mensagem.",
+  "rules": [
+    {
+      "name": "Saudacao",
+      "trigger": "keyword",
+      "triggerValue": ["oi", "ola", "bom dia"],
+      "reply": "Oi {{name}}! Como posso ajudar?"
+    },
+    {
+      "name": "Comando menu",
+      "trigger": "command",
+      "triggerValue": "menu",
+      "reply": "1) Vendas\n2) Suporte\n3) Financeiro"
+    }
+  ]
+}

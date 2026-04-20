@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "terminal": "node src/server.js --terminal",
+    "dev:terminal": "node --watch src/server.js --terminal",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -18,6 +20,7 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "fastify": "^5.8.4",
     "pino": "^9.9.0",
+    "qrcode-terminal": "^0.12.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {

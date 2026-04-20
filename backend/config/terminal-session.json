@@ -1,0 +1,97 @@
+{
+  "sessionId": "main",
+  "authFile": "config/terminal-session.json",
+  "autoRepliesFile": "config/auto-replies.json",
+  "isLoggedIn": false,
+  "hasAuthFiles": true,
+  "lastStartAt": "2026-04-20T18:41:44.979Z",
+  "lastQrAt": "2026-04-20T18:41:46.474Z",
+  "lastConnectedAt": "2026-04-20T18:41:52.816Z",
+  "lastDisconnectedAt": "2026-04-20T18:59:39.459Z",
+  "lastDisconnectReason": "desconectado",
+  "auth": {
+    "creds": {
+      "noiseKey": {
+        "private": {
+          "type": "Buffer",
+          "data": "QAltnjGFY9y2QJV+WsM3RrInq097/THr8aAKzm3kCWg="
+        },
+        "public": {
+          "type": "Buffer",
+          "data": "cDwgUuUynMSmfBv8vxgJhUU339yL3YSewJyGILAZ9TM="
+        }
+      },
+      "pairingEphemeralKeyPair": {
+        "private": {
+          "type": "Buffer",
+          "data": "oNL5c1lBxTLRHwj4m6olOtOFtAFpufzVHSaKnPI9h2k="
+        },
+        "public": {
+          "type": "Buffer",
+          "data": "HKk6eprjb66PjTofph4KVfDaCxlCojuVV9U5mHvF6yE="
+        }
+      },
+      "signedIdentityKey": {
+        "private": {
+          "type": "Buffer",
+          "data": "IAd0GKCG8ekTGJ5V/ybPwDkAqt2jd0Y98f+pQfUa62M="
+        },
+        "public": {
+          "type": "Buffer",
+          "data": "NgJo/xuTU2DvUQeR28PtLJvNZvNGldQdGKuueJ1pM1c="
+        }
+      },
+      "signedPreKey": {
+        "keyPair": {
+          "private": {
+            "type": "Buffer",
+            "data": "QFyY9ccQi3gYTynaYmmn0ZOoOX/LOviPLRltqxE7WF4="
+          },
+          "public": {
+            "type": "Buffer",
+            "data": "RdK7+lHe/t3l900r8E+gVwDX4Z3+AwMuMB7YPEAWxw8="
+          }
+        },
+        "signature": {
+          "type": "Buffer",
+          "data": "P6pX8/knNB3HDm0X72IunF8mRSG853DXsIaJb1nM5noYkXSNPFEW33BjHnyHBzviAjcZ5evj6EwRKK54BrYCDg=="
+        },
+        "keyId": 1
+      },
+      "registrationId": 99,
+      "advSecretKey": "cnCqcZbP16aeIu6vaitmv/m951ft0jPCqVu0yr87cUE=",
+      "processedHistoryMessages": [],
+      "nextPreKeyId": 1,
+      "firstUnuploadedPreKeyId": 1,
+      "accountSyncCounter": 0,
+      "accountSettings": {
+        "unarchiveChats": false
+      },
+      "registered": false,
+      "account": {
+        "details": "CPHOrIEGEOnmmc8GGBYgACgA",
+        "accountSignatureKey": "STP3lMWwVtqPsAd0KH6uff8UdqPRUeGx/6b8EdNNCEM=",
+        "accountSignature": "xYosvpH5l1yKjCV6I4188Fljdq+Z5GOgF4Og+R2nRR/4HKvbkCdjQa5KT65Yv3xMMnda498Q8V4C/nBAgHoiAQ==",
+        "deviceSignature": "9X+7SFfucY4L7RQK9DcSMxPu9cSJEimb0RLxHjljpri6zwal4WO/dAi5RT9i+Rg8SbgTb/WUijto16tuR6HHCw=="
+      },
+      "me": {
+        "id": "5517996448979:71@s.whatsapp.net",
+        "lid": "233646371942498:71@lid"
+      },
+      "signalIdentities": [
+        {
+          "identifier": {
+            "name": "233646371942498:71@lid",
+            "deviceId": 0
+          },
+          "identifierKey": {
+            "type": "Buffer",
+            "data": "BUkz95TFsFbaj7AHdCh+rn3/FHaj0VHhsf+m/BHTTQhD"
+          }
+        }
+      ],
+      "platform": "android"
+    },
+    "keys": {}
+  }
+}
