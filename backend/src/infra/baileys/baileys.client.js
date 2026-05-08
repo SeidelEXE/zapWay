@@ -24,7 +24,7 @@ class BaileysClient {
    */
   constructor(sessionId, callbacks = {}) {
     this.sessionId = sessionId
-    this.authFile = path.join(process.cwd(), 'config', 'terminal-session.json')
+    this.authFile = process.env.WHATSAPP_AUTH_FILE || path.join(process.cwd(), 'config', 'terminal-auth.json')
 
     this.logger = pino({ level: 'silent' })
     this.store = typeof makeInMemoryStore === 'function'

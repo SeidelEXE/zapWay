@@ -9,7 +9,7 @@ const MessageUXService = require('./modules/messages/message.ux');
 const DEFAULT_SESSION_ID = process.env.WHATSAPP_SESSION_ID || 'main';
 const DEFAULT_RULES_PATH = process.env.AUTO_REPLIES_FILE || path.join(process.cwd(), 'config', 'auto-replies.json');
 const DEFAULT_STATE_PATH = process.env.TERMINAL_SESSION_FILE || path.join(process.cwd(), 'config', 'terminal-session.json');
-const DEFAULT_AUTH_FILE_PATH = process.env.WHATSAPP_AUTH_FILE || DEFAULT_STATE_PATH;
+const DEFAULT_AUTH_FILE_PATH = process.env.WHATSAPP_AUTH_FILE || path.join(process.cwd(), 'config', 'terminal-auth.json');
 
 function ensureDirForFile(filePath) {
   const dir = path.dirname(filePath);
@@ -47,6 +47,23 @@ function createDefaultSessionState(sessionId) {
     lastDisconnectedAt: null,
     lastDisconnectReason: null
   };
+}
+
+function migrateInlineAuthToDedicatedFile(stateFilePath, authFilePath) {
+  if (stateFilePath === authFilePath) return;
+  if (!fs.existsSync(stateFilePath) || fs.existsSync(authFilePath)) return;
+
+  try {
+    const stateRaw = fs.readFileSync(stateFilePath, 'utf8');
+    const state = JSON.parse(stateRaw);
+    if (!state?.auth) return;
+
+    ensureDirForFile(authFilePath);
+    fs.writeFileSync(authFilePath, JSON.stringify({ auth: state.auth }, null, 2));
+    console.log(`Auth migrada para arquivo dedicado: ${path.relative(process.cwd(), authFilePath).replace(/\\/g, '/')}`);
+  } catch {
+    // Ignora falha de migracao; o fluxo segue pedindo QR normalmente.
+  }
 }
 
 function loadSessionState(filePath, sessionId) {
@@ -144,6 +161,8 @@ async function startTerminalMode() {
 
   const sessionId = DEFAULT_SESSION_ID;
   const statePath = DEFAULT_STATE_PATH;
+  migrateInlineAuthToDedicatedFile(statePath, DEFAULT_AUTH_FILE_PATH);
+
   let sessionState = loadSessionState(statePath, sessionId);
 
   sessionState = persistSessionState(statePath, sessionState, {
@@ -183,7 +202,8 @@ async function startTerminalMode() {
       });
     },
     onDisconnected: (_sessionId, error) => {
-      const reason = error?.message || 'desconectado';
+      const statusCode = error?.output?.statusCode;
+      const reason = statusCode ? `${error?.message || 'desconectado'} (status=${statusCode})` : (error?.message || 'desconectado');
       console.log(`Sessao desconectada: ${reason}`);
 
       sessionState = persistSessionState(statePath, sessionState, {
