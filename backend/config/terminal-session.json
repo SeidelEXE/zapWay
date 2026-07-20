@@ -2,13 +2,13 @@
   "sessionId": "main",
   "authFile": "config/terminal-auth.json",
   "autoRepliesFile": "config/auto-replies.json",
-  "isLoggedIn": false,
+  "isLoggedIn": true,
   "hasAuthFiles": true,
-  "lastStartAt": "2026-05-08T18:50:09.351Z",
-  "lastQrAt": "2026-05-08T18:49:16.460Z",
-  "lastConnectedAt": "2026-05-08T18:50:12.612Z",
-  "lastDisconnectedAt": "2026-05-08T18:50:19.918Z",
-  "lastDisconnectReason": "desconectado",
+  "lastStartAt": "2026-07-13T13:18:28.809Z",
+  "lastQrAt": "2026-07-13T13:18:32.375Z",
+  "lastConnectedAt": "2026-07-13T13:19:09.212Z",
+  "lastDisconnectedAt": "2026-07-13T13:19:02.522Z",
+  "lastDisconnectReason": null,
   "auth": {
     "creds": {
       "noiseKey": {
