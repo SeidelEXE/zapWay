@@ -7,12 +7,50 @@ export default function Sessions() {
   const [sessions, setSessions] = useState([]);
   const [showQR, setShowQR] = useState(false);
   const [qrCode, setQrCode] = useState(null);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadSessions();
     const interval = setInterval(loadSessions, 5000);
-    return () => clearInterval(interval);
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.hostname}:3001/ws/sessions`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      setError('');
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        const { event: eventName, data } = message;
+
+        if (eventName === 'qr-code' && data?.qr) {
+          setActiveSessionId(data.sessionId);
+          setQrCode(data.qr);
+          setShowQR(true);
+          loadSessions();
+        }
+
+        if (eventName === 'session-status' || eventName === 'session-created') {
+          loadSessions();
+        }
+
+        if (eventName === 'error') {
+          setError(data?.message || 'Erro recebido do backend');
+        }
+      } catch {
+        setError('Resposta inválida recebida pelo WebSocket');
+      }
+    };
+
+    socket.onerror = () => setError('Não foi possível conectar ao WebSocket do backend');
+
+    return () => {
+      clearInterval(interval);
+      socket.close();
+    };
   }, []);
 
   const loadSessions = async () => {
@@ -28,12 +66,15 @@ export default function Sessions() {
 
   const handleCreateSession = async () => {
     try {
+      setError('');
+      setQrCode(null);
+      setShowQR(true);
       const result = await api.createSession();
-      if (result.qr) {
-        setQrCode(result.qr);
-        setShowQR(true);
-      }
+      setActiveSessionId(result.id);
+      await loadSessions();
     } catch (error) {
+      setShowQR(false);
+      setError(error.message || 'Não foi possível criar a sessão');
       console.error('Error creating session:', error);
     }
   };
@@ -56,6 +97,8 @@ export default function Sessions() {
         </button>
       </div>
 
+      {error && <div className="alert-error">{error}</div>}
+
       {loading ? (
         <p>Carregando...</p>
       ) : sessions.length === 0 ? (
@@ -73,7 +116,11 @@ export default function Sessions() {
       )}
 
       {showQR && (
-        <QRModal qrCode={qrCode} onClose={() => setShowQR(false)} />
+        <QRModal
+          qrCode={qrCode}
+          sessionId={activeSessionId}
+          onClose={() => setShowQR(false)}
+        />
       )}
     </div>
   );

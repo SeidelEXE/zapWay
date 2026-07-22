@@ -25,7 +25,13 @@ class SessionSocket {
    */
   registerRoutes() {
     this.fastify.get(this.path, { websocket: true }, (connection) => {
-      const socket = connection.socket
+      // @fastify/websocket pode entregar o WebSocket diretamente ou dentro
+      // de connection.socket, dependendo da versão do plugin.
+      const socket = connection?.socket || connection
+      if (!socket || typeof socket.on !== 'function') {
+        this.fastify.log?.error?.('WebSocket inválido recebido pelo handler')
+        return
+      }
       this.clients.add(socket)
       this.fastify.log?.info?.({ ws: this.path }, 'ws connected')
 

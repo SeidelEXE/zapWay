@@ -71,6 +71,7 @@ async function buildApp() {
 
   // Cria serviço de regras passando o motor como dependência
   const rulesService = new RulesService({ rulesEngine });
+  await rulesService.loadRules();
 
   // Cria controller de regras para tratar requisições HTTP
   const rulesController = new RulesController({ rulesService });
@@ -98,6 +99,9 @@ async function buildApp() {
 
   // Passa referência do listener para processar mensagens
   sessionService.setMessageListener(messageListener);
+
+  // Restaura sessões que possuem credenciais no PostgreSQL.
+  await sessionService.restoreSessions();
 
   // ============================================
   // REGISTRO DE ROTAS

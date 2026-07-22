@@ -1,6 +1,5 @@
-const path = require('path')
 const pino = require('pino')
-const createJsonAuthState = require('./json-auth-state')
+const createPostgresAuthState = require('./db-auth-state')
 
 const {
   default: makeWASocket,
@@ -24,8 +23,6 @@ class BaileysClient {
    */
   constructor(sessionId, callbacks = {}) {
     this.sessionId = sessionId
-    this.authFile = process.env.WHATSAPP_AUTH_FILE || path.join(process.cwd(), 'config', 'terminal-auth.json')
-
     this.logger = pino({ level: 'silent' })
     this.store = typeof makeInMemoryStore === 'function'
       ? makeInMemoryStore({ logger: this.logger })
@@ -58,7 +55,7 @@ class BaileysClient {
     this.shouldReconnect = true
 
     try {
-      const authState = createJsonAuthState(this.authFile)
+      const authState = await createPostgresAuthState(this.sessionId)
       const { state, saveCreds } = authState
 
       let version
@@ -151,10 +148,10 @@ class BaileysClient {
     return Math.round(capped * jitter)
   }
 
-  clearAuthState() {
+  async clearAuthState() {
     try {
-      const authState = createJsonAuthState(this.authFile)
-      authState.clear()
+      const authState = await createPostgresAuthState(this.sessionId)
+      await authState.clear()
     } catch (e) {
       this.callbacks.onError(e)
     }

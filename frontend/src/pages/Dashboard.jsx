@@ -14,13 +14,14 @@ export default function Dashboard() {
 
   const loadStats = async () => {
     try {
-      const [sessions, rules] = await Promise.all([
+      const [sessions, rules, messageStats] = await Promise.all([
         api.getSessions(),
-        api.getRules()
+        api.getRules(),
+        api.getMessageStats()
       ]);
       setStats({
         sessions: sessions.length,
-        messages: 0,
+        messages: messageStats.total || 0,
         rules: rules.length
       });
     } catch (error) {

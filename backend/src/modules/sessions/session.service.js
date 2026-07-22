@@ -8,6 +8,7 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
+const { query } = require('../../config/db');
 
 // Importação do gerenciador Baileys (infraestrutura de baixo nível)
 const BaileysManager = require('../../infra/baileys/baileys.manager');
@@ -224,6 +225,15 @@ class SessionService {
         { text: content }
       );
 
+      const outgoingMessage = {
+        key: { id: result?.key?.id || `out_${Date.now()}`, remoteJid: number, fromMe: true },
+        message: { conversation: content },
+        pushName: 'ZapWay',
+        timestamp: Math.floor(Date.now() / 1000)
+      };
+      await this.messageListener?.getMessageService?.()?.saveMessage(outgoingMessage, sessionId);
+      this.emitNewMessage(outgoingMessage, sessionId);
+
       return {
         success: true,
         messageId: result?.key?.id // ID da mensagem enviada
@@ -273,6 +283,12 @@ class SessionService {
     }
   }
 
+  emitNewMessage(message, sessionId) {
+    if (this.sessionSocket?.emitNewMessage) {
+      this.sessionSocket.emitNewMessage(message, sessionId);
+    }
+  }
+
   /**
    * Processa mensagem recebida do WhatsApp.
    * Encaminha para WebSocket e para o motor de regras.
@@ -288,8 +304,65 @@ class SessionService {
 
     // Encaminha para listener processar regras de automação
     if (this.messageListener?.handleMessage) {
-      await this.messageListener.handleMessage(message, sessionId);
+      const results = await this.messageListener.handleMessage(message, sessionId);
+      const remoteJid = message.key?.remoteJid;
+
+      if (!remoteJid) return results;
+
+      for (const { action } of results || []) {
+        if (action?.type !== 'reply' || !action.content) continue;
+
+        try {
+          await this.baileysManager.sendMessage(
+            sessionId,
+            remoteJid,
+            { text: action.content }
+          );
+          const outgoingMessage = {
+            key: { id: `out_${Date.now()}`, remoteJid, fromMe: true },
+            message: { conversation: action.content },
+            pushName: 'ZapWay',
+            timestamp: Math.floor(Date.now() / 1000)
+          };
+          await this.messageListener?.getMessageService?.()?.saveMessage(outgoingMessage, sessionId);
+          this.emitNewMessage(outgoingMessage, sessionId);
+          console.log(`[${sessionId}] Resposta automática enviada para ${remoteJid}`);
+        } catch (error) {
+          console.error(`[${sessionId}] Falha ao enviar resposta automática:`, error);
+        }
+      }
+
+      return results;
     }
+
+    return [];
+  }
+
+  /**
+   * Recria no startup as sessões que já possuem credenciais persistidas.
+   * O auth state vem do PostgreSQL; nenhum JSON antigo é consultado.
+   */
+  async restoreSessions() {
+    const result = await query(
+      `SELECT s.id
+       FROM sessions s
+       INNER JOIN baileys_creds c ON c.session_id = s.id
+       WHERE EXISTS (
+         SELECT 1 FROM baileys_keys k WHERE k.session_id = s.id
+       )
+       ORDER BY s.created_at`
+    );
+
+    for (const row of result.rows) {
+      try {
+        await this.createSession({ sessionId: row.id, name: row.id });
+        console.log(`Sessão persistida restaurada: ${row.id}`);
+      } catch (error) {
+        console.error(`Falha ao restaurar sessão ${row.id}:`, error.message);
+      }
+    }
+
+    return result.rows.length;
   }
 }
 

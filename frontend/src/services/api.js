@@ -3,19 +3,26 @@ const API_BASE = '/api';
 class ApiService {
   async request(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
+    const headers = {
+      ...options.headers
+    };
+
+    if (options.body !== undefined && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+
     const config = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-      },
-      ...options
+      ...options,
+      headers
     };
 
     const response = await fetch(url, config);
+    const payload = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const detail = payload?.error || payload?.message || 'Requisição rejeitada';
+      throw new Error(`HTTP ${response.status}: ${detail}`);
     }
-    return response.json();
+    return payload;
   }
 
   async getSessions() {
@@ -23,7 +30,10 @@ class ApiService {
   }
 
   async createSession() {
-    return this.request('/sessions', { method: 'POST' });
+    return this.request('/sessions', {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
   }
 
   async deleteSession(sessionId) {
@@ -56,6 +66,10 @@ class ApiService {
     const queryString = new URLSearchParams(params).toString();
     const endpoint = queryString ? `/logs?${queryString}` : '/logs';
     return this.request(endpoint);
+  }
+
+  async getMessageStats() {
+    return this.request('/messages/stats');
   }
 
   async getMessages(sessionId, params = {}) {

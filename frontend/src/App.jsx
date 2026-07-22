@@ -1,9 +1,10 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Outlet } from 'react-router-dom';
 import { AppProvider } from './context';
 import Dashboard from './pages/Dashboard';
 import Sessions from './pages/Sessions';
 import Rules from './pages/Rules';
 import Logs from './pages/Logs';
+import Messages from './pages/Messages';
 import './App.css';
 
 function Sidebar() {
@@ -41,7 +42,7 @@ function Layout({ children }) {
     <div className="app">
       <Sidebar />
       <main className="main-content">
-        {children}
+        {children || <Outlet />}
       </main>
     </div>
   );
@@ -57,6 +58,7 @@ function App() {
             <Route path="sessions" element={<Sessions />} />
             <Route path="rules" element={<Rules />} />
             <Route path="logs" element={<Logs />} />
+            <Route path="sessions/:sessionId/messages" element={<Messages />} />
           </Route>
         </Routes>
       </BrowserRouter>

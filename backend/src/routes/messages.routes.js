@@ -17,6 +17,14 @@ async function messagesRoutes(fastify, options) {
   // Extrai o serviço de mensagens das opções
   const { messageService } = options;
 
+  fastify.get('/stats', async (request, reply) => {
+    try {
+      return reply.send(await messageService.getStats());
+    } catch (error) {
+      return reply.code(500).send({ error: error.message });
+    }
+  });
+
   // ============================================
   // GET /:sessionId - Lista mensagens de uma sessão
   // Parâmetro: sessionId (ID da sessão)

@@ -1,4 +1,7 @@
+import { useNavigate } from 'react-router-dom';
+
 export default function SessionCard({ session, onDelete }) {
+  const navigate = useNavigate();
   const getStatusColor = (status) => {
     switch (status) {
       case 'connected':
@@ -29,6 +32,9 @@ export default function SessionCard({ session, onDelete }) {
         <p><strong>Criado em:</strong> {session.createdAt ? new Date(session.createdAt).toLocaleString() : 'N/A'}</p>
       </div>
       <div className="session-actions">
+        <button onClick={() => navigate(`/sessions/${session.id}/messages`)} className="btn-secondary">
+          Mensagens
+        </button>
         <button onClick={onDelete} className="btn-danger">
           Excluir
         </button>

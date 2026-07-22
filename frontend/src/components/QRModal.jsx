@@ -1,4 +1,6 @@
-export default function QRModal({ qrCode, onClose }) {
+import { QRCodeSVG } from 'qrcode.react';
+
+export default function QRModal({ qrCode, sessionId, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -8,9 +10,9 @@ export default function QRModal({ qrCode, onClose }) {
         </div>
         <div className="modal-body">
           {qrCode ? (
-            <img src={qrCode} alt="QR Code" className="qr-image" />
+            <QRCodeSVG value={qrCode} size={280} level="M" className="qr-image" />
           ) : (
-            <p>Gerando QR Code...</p>
+            <p>Gerando QR Code para {sessionId || 'a nova sessão'}...</p>
           )}
         </div>
         <div className="modal-footer">

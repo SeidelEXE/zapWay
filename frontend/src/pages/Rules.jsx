@@ -8,6 +8,7 @@ export default function Rules() {
   const [showForm, setShowForm] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadRules();
@@ -17,7 +18,9 @@ export default function Rules() {
     try {
       const data = await api.getRules();
       setRules(data);
+      setError('');
     } catch (error) {
+      setError(error.message || 'Não foi possível carregar as regras');
       console.error('Error loading rules:', error);
     } finally {
       setLoading(false);
@@ -26,6 +29,7 @@ export default function Rules() {
 
   const handleSaveRule = async (ruleData) => {
     try {
+      setError('');
       if (editingRule) {
         await api.updateRule(editingRule.id, ruleData);
       } else {
@@ -35,6 +39,7 @@ export default function Rules() {
       setEditingRule(null);
       loadRules();
     } catch (error) {
+      setError(error.message || 'Não foi possível salvar a regra');
       console.error('Error saving rule:', error);
     }
   };
@@ -44,6 +49,7 @@ export default function Rules() {
       await api.deleteRule(ruleId);
       loadRules();
     } catch (error) {
+      setError(error.message || 'Não foi possível excluir a regra');
       console.error('Error deleting rule:', error);
     }
   };
@@ -68,6 +74,8 @@ export default function Rules() {
           Nova Regra
         </button>
       </div>
+
+      {error && <div className="alert-error">{error}</div>}
 
       {loading ? (
         <p>Carregando...</p>
