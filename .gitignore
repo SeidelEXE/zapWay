@@ -1,8 +1,6 @@
 /node_modules
 **/node_modules/
 
-.env
-.env.local
 
 # Logs
 logs
@@ -28,4 +26,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-backend/.env
